@@ -184,7 +184,13 @@ public class MediaNotificationHelper {
 
     // returns a Notification object
     private Notification createNotification() {
+        // TODO mysteryf
         if (mediaMetadataCompat == null || playbackState == null) {
+            if (playbackState == null) {
+                Log.e(LOG_TAG, "noti palybackstate");
+            } if (mediaMetadataCompat == null) {
+                Log.e(LOG_TAG, "noti metadata");
+            }
             return null;
         }
 
@@ -199,7 +205,7 @@ public class MediaNotificationHelper {
                 "Next", intentNext));
 
         builder.setStyle(new android.support.v4.media.app.NotificationCompat.MediaStyle()
-                .setShowActionsInCompactView(PLAY_PAUSE_POSIITON).setMediaSession(sessionToken))
+                .setShowActionsInCompactView(0, PLAY_PAUSE_POSIITON, 2).setMediaSession(sessionToken))
                 .setColor(notificationColor)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -349,7 +355,6 @@ public class MediaNotificationHelper {
     class MediaControllerCallback extends MediaControllerCompat.Callback {
         @Override
         public void onPlaybackStateChanged(PlaybackStateCompat state) {
-            // TODO update state BEFORE startnotification
             playbackState = state;
             if (state != null && stateInactive(state)) {
                 stopNotification();
@@ -411,4 +416,6 @@ public class MediaNotificationHelper {
         }
         return themeColor;
     }
+
+    // TODO kill notification when app crashes
 }

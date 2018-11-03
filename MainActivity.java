@@ -64,10 +64,10 @@ public class MainActivity extends AppCompatActivity {
     private static final int ON_PLAY = 1;
 
     private static final int STATE_ERROR = -1;
-    private static final int STATE_PAUSED = 0;
-    private static final int STATE_PLAYING = 1;
+    private static final int STATE_PAUSED = 1;
+    private static final int STATE_PLAYING = 2;
     private static final int STATE_NONE = 3;
-    private static final int STATE_STOPPED = 2;
+    private static final int STATE_STOPPED = 4;
 
     private int currentState;
 
@@ -76,7 +76,7 @@ public class MainActivity extends AppCompatActivity {
     private MediaConnectionCallback mediaConnectionCallback;
     //private MediaControllerCallback mediaControllerCallback;
 
-    //    private LocalBroadcastManager localBroadcastManager;
+    private LocalBroadcastManager localBroadcastManager;
     private ServiceToActivityReceiver receiver;
 
     private static final String LOG_TAG = MainActivity.class.getName();
@@ -155,6 +155,7 @@ public class MainActivity extends AppCompatActivity {
     // discovers user library and initializes UI & global variables
     private void prepareApp() {
         receiver = new ServiceToActivityReceiver();
+        localBroadcastManager = LocalBroadcastManager.getInstance(this);
         LocalBroadcastManager.getInstance(this).registerReceiver(receiver,
                 new IntentFilter(MediaPlayerContract.INTENT_SERVICE_TO_ACTIVITY));
         songLibrary = new ArrayList<>();
@@ -168,7 +169,9 @@ public class MainActivity extends AppCompatActivity {
         if (songLibrary.size() > 0) {
             Collections.sort(songLibrary, new SongComparator());
             playbackSource = new ArrayList<>(songLibrary);
-            songQueue = new ArrayList<>(songLibrary);
+            if (songQueue == null) {
+                songQueue = new ArrayList<>(songLibrary);
+            }
             BackgroundAudioService.setSongLibrary(songLibrary);
             BackgroundAudioService.setSongQueue(songQueue);
             initUI();
@@ -286,8 +289,8 @@ public class MainActivity extends AppCompatActivity {
         playButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Log.e(LOG_TAG, "PLAYPLAYPLAYPLAY");
-                if (currentState == STATE_PAUSED) {
+                Log.e(LOG_TAG, "current state: ");
+                if (currentState != STATE_PLAYING) {
                     MediaControllerCompat.getMediaController(MainActivity.this).getTransportControls().play();
                     currentState = STATE_PLAYING;
                     resetPausePlay(ON_PLAY);
@@ -428,6 +431,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // TODO reset queue on click?
     // initializes the queue and library ListViews
     private void initListView() {
         ListView songsListView = findViewById(R.id.library_listview);
@@ -590,7 +594,13 @@ public class MainActivity extends AppCompatActivity {
         if (showQueue) {
             playbackSource = songQueue;
             queueAdapter.notifyDataSetChanged();
-        }
+        } /** else {
+            songQueue.clear();
+            songQueue.addAll(songLibrary);
+            if (shuffle) {
+                Collections.shuffle(songQueue);
+            }
+        } **/
     }
 
     // returns true if the player is paused or playing, false otherwise
@@ -671,6 +681,7 @@ public class MainActivity extends AppCompatActivity {
             optionsButton.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
+                    // TODO why??
                     View parentRow = (View) v.getParent();
                     ListView queueListView = (ListView) parentRow.getParent();
                     int position = queueListView.getPositionForView(parentRow);
@@ -697,7 +708,9 @@ public class MainActivity extends AppCompatActivity {
                 albumCoverView.setBackground(getDrawable(R.drawable.missing_cover));
             }
 
-            setViewAppearance(position, titleView, artistView, lengthView);
+            if (currentState > 0) {
+                setViewAppearance(position, titleView, artistView, lengthView);
+            }
 
             return convertView;
         }
@@ -740,33 +753,45 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void onClick(DialogInterface dialog, int which) {
+            // TODO playnext skips all the next songs
             // moves the selected selected song directly in front of the current song
             // in the queue.
-            if (which == PLAY_NEXT) {
-                Song song = queueAdapter.getItem(position);
-                if (position != currentQueuePos % playbackSource.size()) {
+            switch (which) {
+                case PLAY_NEXT:
+                    Song song = queueAdapter.getItem(position);
+                    if (position != currentQueuePos % playbackSource.size()) {
+                        if (position < (currentQueuePos % playbackSource.size())) {
+                            currentQueuePos--;
+                        }
+                        songQueue.remove(song);
+                        songQueue.add(getNextPos(), song);
+                    } else {
+                        Toast.makeText(MainActivity.this, "Song is currently playing.", Toast.LENGTH_SHORT).show();
+                    }
+                    break;
+                case REMOVE:  // removes the selected song from the queue.
+                    songQueue.remove(position);
+                    // remove the current song from the queue and begin playing the next
+                    if (position == currentQueuePos % playbackSource.size()) {
+                        currentQueuePos--;
+                        MediaControllerCompat.getMediaController(MainActivity.this).getTransportControls().skipToNext();
+                        resetPausePlay(ON_PLAY);
+                    }
                     if (position < (currentQueuePos % playbackSource.size())) {
                         currentQueuePos--;
                     }
-                    songQueue.remove(song);
-                    songQueue.add(getNextPos(), song);
-                } else {
-                    Toast.makeText(MainActivity.this, "Song is currently playing.", Toast.LENGTH_SHORT).show();
-                }
-            } else if (which == REMOVE) { // removes the selected song from the queue.
-                songQueue.remove(position);
-                // remove the current song from the queue and begin playing the next
-                if (position == currentQueuePos % playbackSource.size()) {
-                    currentQueuePos--;
-                    MediaControllerCompat.getMediaController(MainActivity.this).getTransportControls().skipToNext();
-                    resetPausePlay(ON_PLAY);
-                }
-                if (position < (currentQueuePos % playbackSource.size())) {
-                    currentQueuePos--;
-                }
+                    break;
             }
+            sendQueuePos();
             playbackSource = songQueue;
             queueAdapter.notifyDataSetChanged();
+        }
+
+        private void sendQueuePos() {
+            Intent intent = new Intent(MediaPlayerContract.INTENT_ACTIVITY_TO_SERVICE);
+            intent.putExtra(MediaPlayerContract.INTENT_TYPE, MediaPlayerContract.INTENT_TYPE_POS);
+            intent.putExtra(MediaPlayerContract.INTENT_EXTRA_POS, currentQueuePos);
+            localBroadcastManager.sendBroadcast(intent);
         }
     }
 
@@ -783,6 +808,9 @@ public class MainActivity extends AppCompatActivity {
                 MediaMetadataCompat metadata = mediaControllerCompat.getMetadata();
                 if (metadata != null) {
                     updateUIFromMetadata(metadata);
+                    Intent intent = new Intent(MediaPlayerContract.INTENT_ACTIVITY_TO_SERVICE);
+                    intent.putExtra(MediaPlayerContract.INTENT_TYPE, MediaPlayerContract.INTENT_TYPE_UI_INFO);
+                    localBroadcastManager.sendBroadcast(intent);
 //                    resetButtons(metadata);
                 }
             } catch (RemoteException e) {
@@ -832,16 +860,16 @@ public class MainActivity extends AppCompatActivity {
 
     // TODO comment
     private void updateUIFromMetadata(MediaMetadataCompat metadata) {
-            MediaDescriptionCompat description = metadata.getDescription();
-            String title = (String) description.getTitle();
-            String artist = (String) description.getSubtitle();
-            String len = metadata.getString(MediaPlayerContract.METADATA_KEY_LENGTH);
-            String album = metadata.getString(MediaPlayerContract.METADATA_KEY_ALBUM);
-            updateSongInfoViews(title, artist, album, len);
-            currentQueuePos = (int) metadata.getLong(MediaPlayerContract.METADATA_KEY_POS);
-            queueAdapter.notifyDataSetChanged();
-            int duration = (int) metadata.getLong(MediaPlayerContract.METADATA_KEY_DURATION);
-            seekBar.setMax(duration / MediaPlayerContract.MS_TO_SEC);
+        MediaDescriptionCompat description = metadata.getDescription();
+        String title = (String) description.getTitle();
+        String artist = (String) description.getSubtitle();
+        String len = metadata.getString(MediaPlayerContract.METADATA_KEY_LENGTH);
+        String album = metadata.getString(MediaPlayerContract.METADATA_KEY_ALBUM);
+        updateSongInfoViews(title, artist, album, len);
+        currentQueuePos = (int) metadata.getLong(MediaPlayerContract.METADATA_KEY_POS);
+        queueAdapter.notifyDataSetChanged();
+        int duration = (int) metadata.getLong(MediaPlayerContract.METADATA_KEY_DURATION);
+        seekBar.setMax(duration / MediaPlayerContract.MS_TO_SEC);
     }
 
     // TODO comment
@@ -849,7 +877,9 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onPlaybackStateChanged(PlaybackStateCompat state) {
             super.onPlaybackStateChanged(state);
-            if (state == null) { return; }
+            if (state == null) {
+                return;
+            }
 
             switch (state.getState()) {
                 case PlaybackStateCompat.STATE_PLAYING:
@@ -902,6 +932,7 @@ public class MainActivity extends AppCompatActivity {
                     shuffle = intent.getBooleanExtra(MediaPlayerContract.INTENT_EXTRA_SHUFFLE, false);
                     loop = intent.getBooleanExtra(MediaPlayerContract.INTENT_EXTRA_LOOP, false);
                     boolean playing = intent.getBooleanExtra(MediaPlayerContract.INTENT_EXTRA_IS_PLAYING, false);
+                    currentQueuePos = intent.getIntExtra(MediaPlayerContract.INTENT_EXTRA_POS, 0);
                     resetButtons(shuffle, loop, playing);
                     break;
 
@@ -933,11 +964,28 @@ public class MainActivity extends AppCompatActivity {
 //        Button playButton = findViewById(R.id.start);
 //        Button pauseButton = findViewById(R.id.pause);
 
+            if (shuffle) {
+                shuffleCheckBox.setBackground(getDrawable(R.drawable.shuffle_orange));
+            }
+            if (loop) {
+                loopCheckBox.setBackground(getDrawable(R.drawable.repeat_orange));
+            }
             shuffleCheckBox.setChecked(shuffle);
+            Log.e(LOG_TAG, "flag shuffle: " + shuffle);
             loopCheckBox.setChecked(loop);
+            Log.e(LOG_TAG, "flag loop: " + loop);
             int flag = isPlaying ? ON_PLAY : ON_PAUSE;
+            currentState = isPlaying ? STATE_PLAYING : STATE_PAUSED;
             resetPausePlay(flag);
         }
+    }
+
+    // TODO comment
+    public static void setQueue(ArrayList<Song> songQueue) {
+//        if (songQueue != null) {
+//            MainActivity.songQueue.clear();
+//            MainActivity.songQueue.addAll(songQueue);
+//        }
     }
 
     // TODO killing activity after shuffling/showing queue etc destroys views

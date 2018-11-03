@@ -80,7 +80,10 @@ public class BackgroundAudioService extends MediaBrowserServiceCompat {
     @Override
     public void onCreate() {
         super.onCreate();
+        ActivityToServiceReceiver receiver = new ActivityToServiceReceiver();
         localBroadcastManager = LocalBroadcastManager.getInstance(getApplicationContext());
+        localBroadcastManager.registerReceiver(receiver,
+                new IntentFilter(MediaPlayerContract.INTENT_ACTIVITY_TO_SERVICE));
         songInfo = new ArrayList<>();
         updateSeekBar();
 
@@ -215,8 +218,6 @@ public class BackgroundAudioService extends MediaBrowserServiceCompat {
     @Override
     public void onDestroy() {
         super.onDestroy();
-
-        notificationHelper.stopNotification();
         AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         audioManager.abandonAudioFocusRequest(requestAudioFocusGain);
         unregisterReceiver(headphoneReceiver);
@@ -310,6 +311,26 @@ public class BackgroundAudioService extends MediaBrowserServiceCompat {
         }
 
         @Override
+        public void onStop() {
+            // TODO reset buttons//now playing//notification//seekbar
+            super.onStop();
+            AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            if (audioManager != null) {
+                audioManager.abandonAudioFocusRequest(requestAudioFocusGain);
+            }
+            if (player != null) {
+                player.stop();
+            }
+            if (notificationHelper != null) {
+                notificationHelper.stopNotification();
+            }
+            unregisterReceiver(headphoneReceiver);
+            mediaSessionCompat.release();
+            stopSelf();
+
+        }
+
+        @Override
         public void onSkipToNext() {
             super.onSkipToNext();
             skipToNext();
@@ -330,19 +351,24 @@ public class BackgroundAudioService extends MediaBrowserServiceCompat {
         @Override
         public void onSetShuffleMode(int shuffleMode) {
             super.onSetShuffleMode(shuffleMode);
-            Song currentSong = songQueue.get(currentQueuePos % songQueue.size());
-            switch (shuffleMode) {
-                case PlaybackStateCompat.SHUFFLE_MODE_ALL:
-                    shuffle = true;
-                    Collections.shuffle(songQueue);
-                    break;
-                case PlaybackStateCompat.SHUFFLE_MODE_NONE:
-                    shuffle = false;
-                    songQueue.clear();
-                    songQueue.addAll(songLibrary);
-                    break;
+            if (currentQueuePos > -1) {
+                Song currentSong = songQueue.get(currentQueuePos % songQueue.size());
+                switch (shuffleMode) {
+                    case PlaybackStateCompat.SHUFFLE_MODE_ALL:
+                        shuffle = true;
+                        Collections.shuffle(songQueue);
+                        break;
+                    case PlaybackStateCompat.SHUFFLE_MODE_NONE:
+                        shuffle = false;
+                        songQueue.clear();
+                        songQueue.addAll(songLibrary);
+                        break;
+                }
+                // TODO wtf
+                currentQueuePos = songQueue.indexOf(currentSong);
+            } else {
+                currentQueuePos++;
             }
-            currentQueuePos = songQueue.indexOf(currentSong);
             sendQueuePos();
         }
 
@@ -394,10 +420,11 @@ public class BackgroundAudioService extends MediaBrowserServiceCompat {
                         initMediaMetadata();
 //                        updateSongInfo();
 //                        sendSongInfo(song, playerDuration);
-                        if (!playbackActive()) {
+//                        if (!playbackActive()) {
                             setMediaPlaybackState(PlaybackStateCompat.STATE_PLAYING);
                             notificationHelper.startNotification();
-                        }
+//                        }
+//                        mediaSessionCompat.getController().getTransportControls().stop();
                     }
                 });
                 player.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
@@ -425,10 +452,11 @@ public class BackgroundAudioService extends MediaBrowserServiceCompat {
                 if (player == null) {
                     Song nextSong = songQueue.get(0);
                     playAudio(nextSong);
+                    notificationHelper.startNotification();
 //                    updateSongInfo();
 //                    sendSongInfo(nextSong, player.getDuration());
                 } else {
-                    setMediaPlaybackState(PlaybackStateCompat.STATE_PLAYING);
+//                    setMediaPlaybackState(PlaybackStateCompat.STATE_PLAYING);
                     player.start();
                 }
 //                notificationHelper.startNotification();
@@ -517,16 +545,21 @@ public class BackgroundAudioService extends MediaBrowserServiceCompat {
             switch (type) {
                 case (MediaPlayerContract.INTENT_TYPE_UI_INFO):
                     sendUIInfo();
+                    MainActivity.setQueue(songQueue);
                     break;
+                case (MediaPlayerContract.INTENT_TYPE_POS):
+                    currentQueuePos = intent.getIntExtra(MediaPlayerContract.INTENT_EXTRA_POS, 0);
             }
         }
 
         // TODO comment
         private void sendUIInfo() {
             Intent intent = new Intent(MediaPlayerContract.INTENT_SERVICE_TO_ACTIVITY);
+            intent.putExtra(MediaPlayerContract.INTENT_TYPE, MediaPlayerContract.INTENT_TYPE_UI_INFO);
             intent.putExtra(MediaPlayerContract.INTENT_EXTRA_IS_PLAYING, (player != null && player.isPlaying()));
             intent.putExtra(MediaPlayerContract.INTENT_EXTRA_LOOP, loop);
             intent.putExtra(MediaPlayerContract.INTENT_EXTRA_SHUFFLE, shuffle);
+            intent.putExtra(MediaPlayerContract.INTENT_EXTRA_POS, currentQueuePos);
             localBroadcastManager.sendBroadcast(intent);
         }
     }

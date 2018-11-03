@@ -105,4 +105,9 @@ public class Song implements Parcelable {
         parcel.writeInt(bytesLength);
 //        parcel.writeByteArray(albumCover);
     }
+
+    @Override
+    public boolean equals(Object obj) {
+        return (obj instanceof Song && path.equals(((Song) obj).getPath()));
+    }
 }
